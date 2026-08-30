@@ -53,18 +53,25 @@ class ActionLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+_DEFAULT_AGENTS = [
+    ("infrastructure", "Infrastructure Agent"),
+    ("color", "Color Agent"),
+]
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
-    # aseguramos que exista el registro del agente piloto para el dashboard
+    # aseguramos que existan los registros de los agentes activos para el dashboard
     with SessionLocal() as session:
-        existing = session.query(Agent).filter_by(slug="infrastructure").first()
-        if not existing:
-            session.add(
-                Agent(
-                    slug="infrastructure",
-                    display_name="Infrastructure Agent",
-                    status="idle",
-                    last_action="Esperando el primer mensaje",
+        for slug, display_name in _DEFAULT_AGENTS:
+            existing = session.query(Agent).filter_by(slug=slug).first()
+            if not existing:
+                session.add(
+                    Agent(
+                        slug=slug,
+                        display_name=display_name,
+                        status="idle",
+                        last_action="Esperando el primer mensaje",
+                    )
                 )
-            )
-            session.commit()
+        session.commit()
