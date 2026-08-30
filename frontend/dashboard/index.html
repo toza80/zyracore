@@ -41,31 +41,51 @@
     vertical-align: middle;
   }
 
-  .office {
-    position: relative;
+  /* Piso: una grilla de oficinas, una por agente */
+  .floor {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 18px;
     margin: 16px 24px 24px;
-    height: 560px;
+  }
+
+  .office-room {
+    position: relative;
+    min-height: 250px;
     background:
-      repeating-linear-gradient(0deg, var(--wall-line) 0 1px, transparent 1px 80px),
-      repeating-linear-gradient(90deg, var(--wall-line) 0 1px, transparent 1px 80px),
+      repeating-linear-gradient(0deg, var(--wall-line) 0 1px, transparent 1px 40px),
+      repeating-linear-gradient(90deg, var(--wall-line) 0 1px, transparent 1px 40px),
       var(--floor);
     border-radius: 16px;
     border: 1px solid #2a3350;
+    border-top: 3px solid var(--room-accent, var(--accent));
     overflow: hidden;
   }
 
   .room-label {
     position: absolute;
-    top: 12px;
+    top: 14px;
     left: 16px;
-    font-size: 12px;
+    right: 16px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--room-accent, var(--text));
+  }
+  .room-subtitle {
+    position: absolute;
+    top: 34px;
+    left: 16px;
+    right: 16px;
+    font-size: 11px;
     color: var(--muted);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
 
   .desk {
     position: absolute;
+    top: 158px;
+    left: 50%;
+    transform: translateX(-50%);
     width: 96px;
     height: 56px;
     background: var(--desk);
@@ -75,20 +95,26 @@
 
   .agent {
     position: absolute;
-    width: 64px;
+    top: 78px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 96px;
     text-align: center;
-    transition: left 1.2s ease, top 1.2s ease;
   }
   .avatar {
-    width: 40px;
-    height: 40px;
-    margin: 0 auto 4px;
+    width: 44px;
+    height: 44px;
+    margin: 0 auto 6px;
     border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, #fff2, transparent 60%), var(--idle);
     box-shadow: 0 0 0 4px rgba(77,163,255,0.15);
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     animation: bob 2.4s ease-in-out infinite;
   }
+  .avatar svg { display: block; width: 22px; height: 22px; }
   .agent[data-status="working"] .avatar {
     background: radial-gradient(circle at 35% 30%, #fff2, transparent 60%), var(--working);
     box-shadow: 0 0 0 4px rgba(255,176,32,0.18);
@@ -108,11 +134,9 @@
     25% { transform: translateX(-2px); }
     75% { transform: translateX(2px); }
   }
-  .name { font-size: 11px; font-weight: 600; }
   .status-text {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--muted);
-    margin-top: 1px;
   }
   .status-dot {
     display: inline-block;
@@ -126,10 +150,10 @@
 
   .bubble {
     position: absolute;
-    bottom: 58px;
+    bottom: 62px;
     left: 50%;
     transform: translateX(-50%);
-    max-width: 220px;
+    width: 200px;
     background: #1c2438;
     border: 1px solid #303c5c;
     color: var(--text);
@@ -167,31 +191,35 @@
   </div>
 </header>
 
-<div class="office" id="office">
-  <div class="room-label">Piso 1 · Infraestructura &amp; Soporte</div>
-  <!-- los escritorios son solo decoracion de la escena -->
-  <div class="desk" style="left:60px; top:120px;"></div>
-  <div class="desk" style="left:220px; top:220px;"></div>
-  <div class="desk" style="left:380px; top:120px;"></div>
-  <div class="desk" style="left:540px; top:220px;"></div>
-  <div class="desk" style="left:700px; top:120px;"></div>
-</div>
+<div class="floor" id="floor"></div>
 
 <footer>
-  Este dashboard arranca con datos simulados y pasa a datos reales automaticamente
-  apenas el backend (<code>/api/agents/status</code>) responde. No hace falta tocar nada.
+  Cada agente tiene su propia oficina. Este dashboard arranca con datos simulados y pasa a
+  datos reales automaticamente apenas el backend (<code>/api/agents/status</code>) responde.
 </footer>
 
 <script>
-const OFFICE_ID = "office";
+const FLOOR_ID = "floor";
 const POLL_MS = 3000;
 
-// Posiciones "de escritorio" fijas para que cada agente tenga su lugar en la oficina.
-const DESK_SPOTS = [
-  { left: 40, top: 70 }, { left: 200, top: 170 }, { left: 360, top: 70 },
-  { left: 520, top: 170 }, { left: 680, top: 70 }, { left: 40, top: 320 },
-  { left: 360, top: 320 },
-];
+// Metadata visual por agente: color de acento + subtitulo del "departamento".
+// Un agente nuevo que no este en este mapa usa DEFAULT_META automaticamente.
+// Iconos SVG inline (sin depender de imagenes externas) que representan el
+// rol de cada agente dentro de su avatar circular.
+const ICON_SERVER = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.4"/><rect x="3" y="14" width="18" height="6" rx="1.4"/><circle cx="7" cy="7" r="0.9" fill="white" stroke="none"/><circle cx="7" cy="17" r="0.9" fill="white" stroke="none"/></svg>`;
+
+const ICON_PALETTE = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c-4.97 0-9 3.58-9 8 0 3.31 2.69 5 5 5h1.1c.6 0 1.1.5 1.1 1.1 0 .28-.1.54-.28.75-.2.23-.28.5-.28.79 0 .6.5 1.1 1.1 1.1C15.4 19.75 19 15.9 19 11c0-4.42-3.13-8-7-8z"/><circle cx="7.6" cy="10.6" r="1" fill="white" stroke="none"/><circle cx="12" cy="7.6" r="1" fill="white" stroke="none"/><circle cx="16" cy="10.2" r="1" fill="white" stroke="none"/></svg>`;
+
+const ICON_CODE = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 3 12 9 18"/><polyline points="15 6 21 12 15 18"/></svg>`;
+
+const ICON_DEFAULT = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6"/></svg>`;
+
+const AGENT_META = {
+  infrastructure: { subtitle: "Infraestructura & Soporte", accent: "#4da3ff", icon: ICON_SERVER },
+  color:          { subtitle: "Gestion de Color",          accent: "#ff6fae", icon: ICON_PALETTE },
+  coder:          { subtitle: "Desarrollo",                accent: "#3ddc84", icon: ICON_CODE },
+};
+const DEFAULT_META = { subtitle: "Equipo ZyraWorks", accent: "#7c5cff", icon: ICON_DEFAULT };
 
 const SIM_ACTIONS = [
   "Revisando estado de VMs en vCenter",
@@ -200,32 +228,41 @@ const SIM_ACTIONS = [
   "Chequeando espacio en TrueNAS",
   "Esperando el proximo mensaje",
   "Armando diagnostico de red",
+  "Analizando CGATS vs Fogra39",
+  "Calculando spread de TVI",
+  "Revisando ΔE de un solido",
 ];
 
 let simAgents = [
   { slug: "infrastructure", display_name: "Infrastructure Agent", status: "idle", last_action: "Esperando el primer mensaje" },
+  { slug: "color",          display_name: "Color Agent",          status: "idle", last_action: "Esperando el primer mensaje" },
 ];
 
-const elements = new Map();
+const rooms = new Map();
 
-function ensureAgentEl(agent, index) {
-  let el = elements.get(agent.slug);
-  if (el) return el;
+function ensureRoom(agent, index) {
+  let entry = rooms.get(agent.slug);
+  if (entry) return entry;
 
-  const spot = DESK_SPOTS[index % DESK_SPOTS.length];
-  el = document.createElement("div");
-  el.className = "agent";
-  el.style.left = spot.left + "px";
-  el.style.top = spot.top + "px";
-  el.innerHTML = `
-    <div class="bubble"></div>
-    <div class="avatar"></div>
-    <div class="name">${agent.display_name}</div>
-    <div class="status-text"><span class="status-dot"></span><span class="status-label"></span></div>
+  const meta = AGENT_META[agent.slug] || DEFAULT_META;
+  const room = document.createElement("div");
+  room.className = "office-room";
+  room.style.setProperty("--room-accent", meta.accent);
+  room.innerHTML = `
+    <div class="room-label">${agent.display_name}</div>
+    <div class="room-subtitle">${meta.subtitle}</div>
+    <div class="desk"></div>
+    <div class="agent">
+      <div class="bubble"></div>
+      <div class="avatar">${meta.icon}</div>
+      <div class="status-text"><span class="status-dot"></span><span class="status-label"></span></div>
+    </div>
   `;
-  document.getElementById(OFFICE_ID).appendChild(el);
-  elements.set(agent.slug, el);
-  return el;
+  document.getElementById(FLOOR_ID).appendChild(room);
+
+  entry = { room, agentEl: room.querySelector(".agent") };
+  rooms.set(agent.slug, entry);
+  return entry;
 }
 
 function statusLabel(status) {
@@ -236,16 +273,16 @@ function statusLabel(status) {
 
 function render(agents) {
   agents.forEach((agent, i) => {
-    const el = ensureAgentEl(agent, i);
-    el.dataset.status = agent.status;
-    el.querySelector(".status-label").textContent = statusLabel(agent.status);
+    const { agentEl } = ensureRoom(agent, i);
+    agentEl.dataset.status = agent.status;
+    agentEl.querySelector(".status-label").textContent = statusLabel(agent.status);
 
-    const bubble = el.querySelector(".bubble");
+    const bubble = agentEl.querySelector(".bubble");
     if (agent.last_action && bubble.textContent !== agent.last_action) {
       bubble.textContent = agent.last_action;
-      el.classList.add("show-bubble");
-      clearTimeout(el._bubbleTimer);
-      el._bubbleTimer = setTimeout(() => el.classList.remove("show-bubble"), 4000);
+      agentEl.classList.add("show-bubble");
+      clearTimeout(agentEl._bubbleTimer);
+      agentEl._bubbleTimer = setTimeout(() => agentEl.classList.remove("show-bubble"), 4000);
     }
   });
 }
@@ -253,10 +290,8 @@ function render(agents) {
 function setMode(live) {
   const badge = document.getElementById("mode-badge");
   const text = document.getElementById("mode-text");
-  const dot = document.getElementById("mode-dot");
   if (live) {
     badge.textContent = "datos en vivo";
-    dot.classList.remove("sim-dot");
     text.innerHTML = '<span class="live-dot" id="mode-dot"></span>Conectado al backend real.';
   } else {
     badge.textContent = "datos simulados";
@@ -283,6 +318,7 @@ async function poll() {
     const res = await fetch("/api/agents/status", { cache: "no-store" });
     if (!res.ok) throw new Error("bad status");
     const agents = await res.json();
+    if (!agents.length) throw new Error("sin agentes todavia");
     setMode(true);
     render(agents);
   } catch (e) {
