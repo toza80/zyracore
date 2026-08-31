@@ -45,6 +45,10 @@ async def _send_result(update: Update, result: dict) -> None:
     if pdf:
         pdf_name = result.get("pdf_name") or "informe.pdf"
         await update.message.reply_document(document=io.BytesIO(pdf), filename=pdf_name)
+    html_report = result.get("html")
+    if html_report:
+        html_name = result.get("html_name") or "informe.html"
+        await update.message.reply_document(document=io.BytesIO(html_report), filename=html_name)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

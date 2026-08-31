@@ -28,14 +28,18 @@ def _classify(text: str) -> str:
     return _default_agent_slug
 
 
+def _with_prefix(slug: str, result: dict) -> dict:
+    # Copiamos todo lo que devuelva el agente (chart, pdf, html, etc.) en vez
+    # de listar cada clave a mano -- asi un agente puede sumar un adjunto
+    # nuevo sin tener que tocar el orquestador cada vez.
+    out = dict(result)
+    out["text"] = f"{_prefixes[slug]} {result['text']}"
+    return out
+
+
 def _reply(slug: str, chat_id: int, text: str) -> dict:
     result = _agents[slug].handle_message(chat_id, text)
-    return {
-        "text": f"{_prefixes[slug]} {result['text']}",
-        "chart": result.get("chart"),
-        "pdf": result.get("pdf"),
-        "pdf_name": result.get("pdf_name"),
-    }
+    return _with_prefix(slug, result)
 
 
 def route_message(chat_id: int, text: str) -> dict:
@@ -57,9 +61,4 @@ def route_message(chat_id: int, text: str) -> dict:
 def route_document(chat_id: int, filename: str, content: str) -> dict:
     # Por ahora solo el Color Agent procesa archivos adjuntos (CGATS).
     result = _agents["color"].handle_document(chat_id, filename, content)
-    return {
-        "text": f"{_prefixes['color']} {result['text']}",
-        "chart": result.get("chart"),
-        "pdf": result.get("pdf"),
-        "pdf_name": result.get("pdf_name"),
-    }
+    return _with_prefix("color", result)

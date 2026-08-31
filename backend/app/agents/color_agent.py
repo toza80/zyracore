@@ -1,10 +1,13 @@
 import json
+import logging
 
 from app.agents.base_agent import BaseAgent
 from app.db import Agent, ActionLog, SessionLocal
 from app.llm.factory import get_llm_provider
 from app.services.cgats_offset import ISO_STANDARDS, analyze_cgats_offset
-from app.services.report_html import render_color_report_pdf
+from app.services.report_html import render_color_report_html, render_color_report_pdf
+
+log = logging.getLogger("color-agent")
 
 SYSTEM_PROMPT = """Sos el Color Agent de ZyraWorks, experto en gestion de color para
 impresion offset y flexografica: ISO 12647-2, standards Fogra (29, 39, 47, 49, 50, 51)
@@ -75,6 +78,7 @@ class ColorAgent(BaseAgent):
                 messages=[{"role": "user", "content": text}],
             )
         except Exception as exc:
+            log.exception("Fallo consultando el LLM (chat %s)", chat_id)
             self._set_status("error", f"Error consultando el LLM: {exc}")
             self._log(chat_id, text, f"ERROR: {exc}")
             return {
@@ -126,6 +130,7 @@ class ColorAgent(BaseAgent):
         try:
             reply = self._explain_analysis(analysis)
         except Exception as exc:
+            log.exception("Fallo consultando el LLM para explicar el analisis (chat %s)", chat_id)
             self._set_status("error", f"Error consultando el LLM: {exc}")
             self._log(chat_id, f"[CGATS vs {standard_key}]", f"ERROR: {exc}")
             return {
@@ -136,22 +141,39 @@ class ColorAgent(BaseAgent):
                 "chart": None,
             }
 
-        # El informe (PDF) y el grafico se generan siempre a partir del resultado
-        # ya calculado, nunca del LLM -- si algo falla aca, no perdemos la
-        # explicacion de texto, que ya se logueo/enviara igual.
+        # El informe (PDF + HTML interactivo) y el grafico se generan siempre a
+        # partir del resultado ya calculado, nunca del LLM -- si algo falla
+        # aca, no perdemos la explicacion de texto, que ya se logueo/enviara
+        # igual. IMPORTANTE: logueamos el traceback -- antes esto se tragaba
+        # el error en silencio y ni el usuario ni nosotros nos enterabamos.
         try:
             pdf = render_color_report_pdf(analysis, standard_key, {"filename": filename})
         except Exception:
+            log.exception("Fallo generando el PDF del informe (chat %s, standard %s)", chat_id, standard_key)
             pdf = None
+
+        try:
+            html_report = render_color_report_html(analysis, standard_key, {"filename": filename})
+        except Exception:
+            log.exception("Fallo generando el HTML del informe (chat %s, standard %s)", chat_id, standard_key)
+            html_report = None
 
         self._log(chat_id, f"[CGATS vs {standard_key}]", reply)
         self._set_status("idle", f"Analisis CGATS vs {standard_key} completado")
-        return {"text": reply, "chart": None, "pdf": pdf, "pdf_name": self._report_filename(filename)}
+        base_name = self._report_basename(filename)
+        return {
+            "text": reply,
+            "chart": None,
+            "pdf": pdf,
+            "pdf_name": f"{base_name}.pdf",
+            "html": html_report,
+            "html_name": f"{base_name}.html",
+        }
 
     @staticmethod
-    def _report_filename(source_filename: str) -> str:
+    def _report_basename(source_filename: str) -> str:
         base = source_filename.rsplit(".", 1)[0] if "." in source_filename else source_filename
-        return f"Informe_{base}.pdf"
+        return f"Informe_{base}"
 
     def _explain_analysis(self, analysis: dict) -> str:
         """Le pasamos al LLM SOLO el resultado ya calculado (nunca el CGATS crudo,
