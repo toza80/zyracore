@@ -27,7 +27,7 @@ class InfrastructureAgent(BaseAgent):
         de verdad a la API de vCenter con pyVmomi usando credenciales de .env."""
         return {"vm": vm_name, "status": "unknown (integracion con vCenter pendiente)"}
 
-    def handle_message(self, chat_id: int, text: str) -> str:
+    def handle_message(self, chat_id: int, text: str) -> dict:
         self._set_status("working", f"Procesando: {text[:80]}")
 
         try:
@@ -35,18 +35,21 @@ class InfrastructureAgent(BaseAgent):
                 system_prompt=self.system_prompt,
                 messages=[{"role": "user", "content": text}],
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - queremos capturar cualquier falla del LLM
             error_msg = f"Error consultando el LLM: {exc}"
             self._set_status("error", error_msg)
             self._log(chat_id, text, f"ERROR: {exc}")
-            return (
-                "Tuve un problema consultando al modelo de IA (revisá saldo/API key del "
-                "proveedor configurado). Los detalles quedaron en los logs del backend."
-            )
+            return {
+                "text": (
+                    "Tuve un problema consultando al modelo de IA (revisá saldo/API key del "
+                    "proveedor configurado). Los detalles quedaron en los logs del backend."
+                ),
+                "chart": None,
+            }
 
         self._log(chat_id, text, reply)
         self._set_status("idle", f"Ultima respuesta a chat {chat_id}")
-        return reply
+        return {"text": reply, "chart": None}
 
     def _set_status(self, status: str, last_action: str) -> None:
         with SessionLocal() as session:

@@ -28,12 +28,17 @@ def _classify(text: str) -> str:
     return _default_agent_slug
 
 
-def _reply(slug: str, chat_id: int, text: str) -> str:
-    reply = _agents[slug].handle_message(chat_id, text)
-    return f"{_prefixes[slug]} {reply}"
+def _reply(slug: str, chat_id: int, text: str) -> dict:
+    result = _agents[slug].handle_message(chat_id, text)
+    return {
+        "text": f"{_prefixes[slug]} {result['text']}",
+        "chart": result.get("chart"),
+        "pdf": result.get("pdf"),
+        "pdf_name": result.get("pdf_name"),
+    }
 
 
-def route_message(chat_id: int, text: str) -> str:
+def route_message(chat_id: int, text: str) -> dict:
     # Override manual: "/color tu pregunta" o "/infra tu pregunta" fuerza el agente.
     stripped = text.strip()
     for command, slug in (("/color", "color"), ("/infra", "infrastructure")):
@@ -49,7 +54,12 @@ def route_message(chat_id: int, text: str) -> str:
     return _reply(slug, chat_id, stripped)
 
 
-def route_document(chat_id: int, filename: str, content: str) -> str:
+def route_document(chat_id: int, filename: str, content: str) -> dict:
     # Por ahora solo el Color Agent procesa archivos adjuntos (CGATS).
-    reply = _agents["color"].handle_document(chat_id, filename, content)
-    return f"{_prefixes['color']} {reply}"
+    result = _agents["color"].handle_document(chat_id, filename, content)
+    return {
+        "text": f"{_prefixes['color']} {result['text']}",
+        "chart": result.get("chart"),
+        "pdf": result.get("pdf"),
+        "pdf_name": result.get("pdf_name"),
+    }

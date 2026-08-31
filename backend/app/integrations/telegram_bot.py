@@ -3,6 +3,7 @@ servicio telegram-worker) usando polling -- no requiere dominio publico ni
 HTTPS, ideal para esta primera fase corriendo solo en tu red/VM.
 """
 
+import io
 import logging
 
 from telegram import Update
@@ -30,6 +31,22 @@ async def _reject_unauthorized(update: Update, user) -> None:
     )
 
 
+# Extensiones que aceptamos como CGATS. El contenido se valida de verdad
+# despues (busca BEGIN_DATA_FORMAT) -- esto solo filtra lo obviamente ajeno.
+_CGATS_EXTENSIONS = (".txt", ".cgt", ".cgats")
+
+
+async def _send_result(update: Update, result: dict) -> None:
+    await update.message.reply_text(result["text"])
+    chart = result.get("chart")
+    if chart:
+        await update.message.reply_photo(photo=io.BytesIO(chart))
+    pdf = result.get("pdf")
+    if pdf:
+        pdf_name = result.get("pdf_name") or "informe.pdf"
+        await update.message.reply_document(document=io.BytesIO(pdf), filename=pdf_name)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -39,8 +56,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _reject_unauthorized(update, user)
         return
 
-    reply = route_message(chat_id, text)
-    await update.message.reply_text(reply)
+    result = route_message(chat_id, text)
+    await _send_result(update, result)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -52,9 +69,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     doc = update.message.document
-    if not doc.file_name.lower().endswith(".txt"):
+    if not doc.file_name.lower().endswith(_CGATS_EXTENSIONS):
+        opciones = ", ".join(_CGATS_EXTENSIONS)
         await update.message.reply_text(
-            "Por ahora solo puedo leer archivos CGATS en formato .txt"
+            f"Por ahora puedo leer archivos CGATS con extension: {opciones}"
         )
         return
 
@@ -62,8 +80,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     file_bytes = await tg_file.download_as_bytearray()
     content = bytes(file_bytes).decode("utf-8", errors="replace")
 
-    reply = route_document(chat_id, doc.file_name, content)
-    await update.message.reply_text(reply)
+    result = route_document(chat_id, doc.file_name, content)
+    await _send_result(update, result)
 
 
 def main() -> None:

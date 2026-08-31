@@ -4,6 +4,7 @@ from app.agents.base_agent import BaseAgent
 from app.db import Agent, ActionLog, SessionLocal
 from app.llm.factory import get_llm_provider
 from app.services.cgats_offset import ISO_STANDARDS, analyze_cgats_offset
+from app.services.report_html import render_color_report_pdf
 
 SYSTEM_PROMPT = """Sos el Color Agent de ZyraWorks, experto en gestion de color para
 impresion offset y flexografica: ISO 12647-2, standards Fogra (29, 39, 47, 49, 50, 51)
@@ -52,17 +53,18 @@ class ColorAgent(BaseAgent):
 
     def __init__(self) -> None:
         self._llm = get_llm_provider()
-        # chat_id -> contenido CGATS crudo, esperando que el usuario elija standard.
+        # chat_id -> {"content": CGATS crudo, "filename": nombre original},
+        # esperando que el usuario elija standard.
         # Nota: esto vive en memoria del proceso telegram-worker. Si el worker se
         # reinicia con un analisis pendiente, se pierde y hay que resubir el archivo.
         # Fase futura: mover este estado a Redis (ya esta en el stack) para que
         # sobreviva a reinicios.
-        self._pending_cgats: dict[int, str] = {}
+        self._pending_cgats: dict[int, dict] = {}
 
     def has_pending_analysis(self, chat_id: int) -> bool:
         return chat_id in self._pending_cgats
 
-    def handle_message(self, chat_id: int, text: str) -> str:
+    def handle_message(self, chat_id: int, text: str) -> dict:
         if chat_id in self._pending_cgats:
             return self._resolve_pending_analysis(chat_id, text)
 
@@ -75,57 +77,81 @@ class ColorAgent(BaseAgent):
         except Exception as exc:
             self._set_status("error", f"Error consultando el LLM: {exc}")
             self._log(chat_id, text, f"ERROR: {exc}")
-            return (
-                "Tuve un problema consultando al modelo de IA (revisa saldo/API key). "
-                "Detalles en los logs del backend."
-            )
+            return {
+                "text": (
+                    "Tuve un problema consultando al modelo de IA (revisa saldo/API key). "
+                    "Detalles en los logs del backend."
+                ),
+                "chart": None,
+            }
 
         self._log(chat_id, text, reply)
         self._set_status("idle", f"Ultima respuesta a chat {chat_id}")
-        return reply
+        return {"text": reply, "chart": None}
 
-    def handle_document(self, chat_id: int, filename: str, content: str) -> str:
+    def handle_document(self, chat_id: int, filename: str, content: str) -> dict:
         if "BEGIN_DATA_FORMAT" not in content:
-            return (
-                f"El archivo '{filename}' no parece un CGATS valido (no encontre "
-                "BEGIN_DATA_FORMAT). Verifica que sea la exportacion correcta del "
-                "instrumento de medicion."
-            )
+            return {
+                "text": (
+                    f"El archivo '{filename}' no parece un CGATS valido (no encontre "
+                    "BEGIN_DATA_FORMAT). Verifica que sea la exportacion correcta del "
+                    "instrumento de medicion."
+                ),
+                "chart": None,
+            }
 
-        self._pending_cgats[chat_id] = content
+        self._pending_cgats[chat_id] = {"content": content, "filename": filename}
         opciones = ", ".join(sorted(ISO_STANDARDS.keys()))
-        return (
-            f"Recibi '{filename}'. ¿Contra que standard lo comparo?\n"
-            f"Opciones: {opciones}"
-        )
+        return {
+            "text": f"Recibi '{filename}'. ¿Contra que standard lo comparo?\nOpciones: {opciones}",
+            "chart": None,
+        }
 
-    def _resolve_pending_analysis(self, chat_id: int, text: str) -> str:
+    def _resolve_pending_analysis(self, chat_id: int, text: str) -> dict:
         standard_key = _normalize_standard(text)
         if not standard_key:
             opciones = ", ".join(sorted(ISO_STANDARDS.keys()))
-            return f"No reconozco ese standard. Opciones validas: {opciones}"
+            return {"text": f"No reconozco ese standard. Opciones validas: {opciones}", "chart": None}
 
-        content = self._pending_cgats.pop(chat_id)
+        pending = self._pending_cgats.pop(chat_id)
+        content = pending["content"]
+        filename = pending["filename"]
         self._set_status("working", f"Analizando CGATS contra {standard_key}")
 
         analysis = analyze_cgats_offset(content, standard_key)
         if analysis.get("error"):
             self._set_status("error", analysis["error"])
-            return f"No pude analizar el archivo: {analysis['error']}"
+            return {"text": f"No pude analizar el archivo: {analysis['error']}", "chart": None}
 
         try:
             reply = self._explain_analysis(analysis)
         except Exception as exc:
             self._set_status("error", f"Error consultando el LLM: {exc}")
             self._log(chat_id, f"[CGATS vs {standard_key}]", f"ERROR: {exc}")
-            return (
-                "El calculo se hizo bien, pero tuve un problema consultando al "
-                "modelo de IA para explicarlo. Revisa saldo/API key."
-            )
+            return {
+                "text": (
+                    "El calculo se hizo bien, pero tuve un problema consultando al "
+                    "modelo de IA para explicarlo. Revisa saldo/API key."
+                ),
+                "chart": None,
+            }
+
+        # El informe (PDF) y el grafico se generan siempre a partir del resultado
+        # ya calculado, nunca del LLM -- si algo falla aca, no perdemos la
+        # explicacion de texto, que ya se logueo/enviara igual.
+        try:
+            pdf = render_color_report_pdf(analysis, standard_key, {"filename": filename})
+        except Exception:
+            pdf = None
 
         self._log(chat_id, f"[CGATS vs {standard_key}]", reply)
         self._set_status("idle", f"Analisis CGATS vs {standard_key} completado")
-        return reply
+        return {"text": reply, "chart": None, "pdf": pdf, "pdf_name": self._report_filename(filename)}
+
+    @staticmethod
+    def _report_filename(source_filename: str) -> str:
+        base = source_filename.rsplit(".", 1)[0] if "." in source_filename else source_filename
+        return f"Informe_{base}.pdf"
 
     def _explain_analysis(self, analysis: dict) -> str:
         """Le pasamos al LLM SOLO el resultado ya calculado (nunca el CGATS crudo,
