@@ -4,13 +4,14 @@ WORKDIR /app
 
 # WeasyPrint (servicio de informes PDF) necesita estas librerias de sistema
 # para renderizar HTML/CSS a PDF -- no alcanza con pip install.
+# Nota: desde WeasyPrint 53 el motor de render es propio (pydyf), ya no usa
+# cairo ni gdk-pixbuf -- por eso NO estan en esta lista (en Debian trixie,
+# que usa esta imagen base, esos paquetes viejos ni siquiera existen mas).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
-    libcairo2 \
-    libffi-dev \
-    shared-mime-info \
+    libpangoft2-1.0-0 \
+    libharfbuzz-subset0 \
+    fontconfig \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
