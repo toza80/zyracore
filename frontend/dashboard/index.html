@@ -66,10 +66,11 @@
     position: absolute;
     top: 14px;
     left: 16px;
-    right: 16px;
+    right: 56px; /* deja lugar al boton de historial, que va arriba a la derecha */
     font-size: 13px;
     font-weight: 700;
     color: var(--room-accent, var(--text));
+    pointer-events: none;
   }
   .room-subtitle {
     position: absolute;
@@ -79,6 +80,7 @@
     font-size: 11px;
     color: var(--muted);
     letter-spacing: 0.02em;
+    pointer-events: none;
   }
 
   .desk {
@@ -167,6 +169,91 @@
   }
   .agent.show-bubble .bubble { opacity: 1; }
 
+  /* Boton "Historial" -- esquina de cada oficina, abre el panel de tareas. */
+  .history-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #1c2438;
+    border: 1px solid #303c5c;
+    color: var(--muted);
+    font-size: 10.5px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .history-btn:hover { color: var(--text); border-color: var(--room-accent, var(--accent)); }
+  .history-btn svg { width: 12px; height: 12px; flex: none; }
+  .history-count {
+    display: inline-block;
+    min-width: 14px;
+    text-align: center;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  /* Modal de historial -- overlay simple, sin dependencias externas. */
+  .history-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 9, 18, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 24px;
+  }
+  .history-overlay[hidden] { display: none; }
+  .history-modal {
+    width: 100%;
+    max-width: 480px;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: var(--floor);
+    border: 1px solid #303c5c;
+    border-top: 3px solid var(--modal-accent, var(--accent));
+    border-radius: 14px;
+    padding: 18px 20px 14px;
+  }
+  .history-modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .history-modal-title { font-size: 15px; font-weight: 700; margin: 0; }
+  .history-modal-subtitle { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .history-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+  .history-close:hover { color: var(--text); }
+  .history-empty { color: var(--muted); font-size: 12.5px; padding: 10px 0; }
+  .history-item {
+    border-top: 1px solid #2a3350;
+    padding: 10px 0;
+  }
+  .history-item:first-child { border-top: none; }
+  .history-item-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .history-item-row { font-size: 12px; margin: 2px 0; line-height: 1.4; }
+  .history-item-row b { color: var(--muted); font-weight: 600; }
+
   footer {
     padding: 0 24px 24px;
     color: var(--muted);
@@ -193,9 +280,23 @@
 
 <div class="floor" id="floor"></div>
 
+<div class="history-overlay" id="history-overlay" hidden>
+  <div class="history-modal" id="history-modal">
+    <div class="history-modal-head">
+      <div>
+        <p class="history-modal-title" id="history-title"></p>
+        <p class="history-modal-subtitle" id="history-subtitle"></p>
+      </div>
+      <button class="history-close" id="history-close" aria-label="Cerrar">✕</button>
+    </div>
+    <div id="history-list"></div>
+  </div>
+</div>
+
 <footer>
   Cada agente tiene su propia oficina. Este dashboard arranca con datos simulados y pasa a
   datos reales automaticamente apenas el backend (<code>/api/agents/status</code>) responde.
+  El boton "Historial" de cada oficina muestra sus ultimas tareas reales.
 </footer>
 
 <script>
@@ -213,6 +314,8 @@ const ICON_PALETTE = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke
 const ICON_CODE = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 3 12 9 18"/><polyline points="15 6 21 12 15 18"/></svg>`;
 
 const ICON_DEFAULT = `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6"/></svg>`;
+
+const ICON_HISTORY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>`;
 
 const AGENT_META = {
   infrastructure: { subtitle: "Infraestructura & Soporte", accent: "#4da3ff", icon: ICON_SERVER },
@@ -239,6 +342,10 @@ let simAgents = [
 ];
 
 const rooms = new Map();
+// slug -> { display_name, recent_actions } -- ultimo dato conocido de cada
+// agente, para poder abrir/refrescar el modal de historial sin re-pollear.
+const agentData = new Map();
+let openHistorySlug = null;
 
 function ensureRoom(agent, index) {
   let entry = rooms.get(agent.slug);
@@ -249,6 +356,9 @@ function ensureRoom(agent, index) {
   room.className = "office-room";
   room.style.setProperty("--room-accent", meta.accent);
   room.innerHTML = `
+    <button class="history-btn" data-slug="${agent.slug}" title="Ver ultimas tareas">
+      ${ICON_HISTORY}<span class="history-count"></span>
+    </button>
     <div class="room-label">${agent.display_name}</div>
     <div class="room-subtitle">${meta.subtitle}</div>
     <div class="desk"></div>
@@ -260,10 +370,69 @@ function ensureRoom(agent, index) {
   `;
   document.getElementById(FLOOR_ID).appendChild(room);
 
-  entry = { room, agentEl: room.querySelector(".agent") };
+  room.querySelector(".history-btn").addEventListener("click", () => openHistory(agent.slug));
+
+  entry = { room, agentEl: room.querySelector(".agent"), historyBtn: room.querySelector(".history-btn") };
   rooms.set(agent.slug, entry);
   return entry;
 }
+
+function historyItemHtml(item) {
+  const when = item.created_at ? new Date(item.created_at).toLocaleString("es-AR") : "";
+  return `
+    <div class="history-item">
+      <div class="history-item-meta"><span>${item.channel || ""}</span><span>${when}</span></div>
+      ${item.input ? `<div class="history-item-row"><b>Entrada:</b> ${escapeHtml(item.input)}</div>` : ""}
+      ${item.output ? `<div class="history-item-row"><b>Respuesta:</b> ${escapeHtml(item.output)}</div>` : ""}
+    </div>
+  `;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderHistoryModal(slug) {
+  const data = agentData.get(slug);
+  const meta = AGENT_META[slug] || DEFAULT_META;
+  document.getElementById("history-title").textContent = (data && data.display_name) || slug;
+  document.getElementById("history-modal").style.setProperty("--modal-accent", meta.accent);
+
+  const actions = (data && data.recent_actions) || null;
+  const list = document.getElementById("history-list");
+  const subtitle = document.getElementById("history-subtitle");
+
+  if (actions === null) {
+    subtitle.textContent = "Modo simulado -- todavia sin conexion al backend real.";
+    list.innerHTML = '<div class="history-empty">No hay historial disponible mientras el dashboard muestra datos simulados.</div>';
+    return;
+  }
+  subtitle.textContent = `Ultimas ${actions.length} tarea${actions.length === 1 ? "" : "s"}`;
+  list.innerHTML = actions.length
+    ? actions.map(historyItemHtml).join("")
+    : '<div class="history-empty">Este agente todavia no registro ninguna tarea.</div>';
+}
+
+function openHistory(slug) {
+  openHistorySlug = slug;
+  renderHistoryModal(slug);
+  document.getElementById("history-overlay").hidden = false;
+}
+
+function closeHistory() {
+  openHistorySlug = null;
+  document.getElementById("history-overlay").hidden = true;
+}
+
+document.getElementById("history-close").addEventListener("click", closeHistory);
+document.getElementById("history-overlay").addEventListener("click", (e) => {
+  if (e.target.id === "history-overlay") closeHistory();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeHistory();
+});
 
 function statusLabel(status) {
   if (status === "working") return "trabajando";
@@ -273,7 +442,7 @@ function statusLabel(status) {
 
 function render(agents) {
   agents.forEach((agent, i) => {
-    const { agentEl } = ensureRoom(agent, i);
+    const { agentEl, historyBtn } = ensureRoom(agent, i);
     agentEl.dataset.status = agent.status;
     agentEl.querySelector(".status-label").textContent = statusLabel(agent.status);
 
@@ -284,6 +453,16 @@ function render(agents) {
       clearTimeout(agentEl._bubbleTimer);
       agentEl._bubbleTimer = setTimeout(() => agentEl.classList.remove("show-bubble"), 4000);
     }
+
+    // "recent_actions" solo viene del backend real -- en modo simulado queda
+    // undefined, y lo guardamos como null para que el modal avise que es sim.
+    const recentActions = Array.isArray(agent.recent_actions) ? agent.recent_actions : null;
+    agentData.set(agent.slug, { display_name: agent.display_name, recent_actions: recentActions });
+
+    const countEl = historyBtn.querySelector(".history-count");
+    countEl.textContent = recentActions && recentActions.length ? recentActions.length : "";
+
+    if (openHistorySlug === agent.slug) renderHistoryModal(agent.slug);
   });
 }
 
